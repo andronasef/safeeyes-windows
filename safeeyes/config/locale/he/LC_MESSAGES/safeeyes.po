@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: \n"
-"PO-Revision-Date: 2026-04-28 18:09+0000\n"
+"PO-Revision-Date: 2026-05-02 08:09+0000\n"
 "Last-Translator: \"Omer I.S.\" <omeritzicschwartz@gmail.com>\n"
 "Language-Team: Hebrew <https://hosted.weblate.org/projects/safe-eyes/"
 "translations/he/>\n"
@@ -15,7 +15,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
-"X-Generator: Weblate 5.17.1-dev\n"
+"X-Generator: Weblate 5.17.1\n"
 
 # Short break
 msgid "Gently close your eyes"
@@ -59,7 +59,7 @@ msgstr "לקחת חמש נשימות עמוקות ואיטיות"
 
 # Short break
 msgid "Relax your shoulders and drop them away from your ears"
-msgstr ""
+msgstr "להרגיע את הכתפיים ולשחרר אותן כך שיהיו רחוקות מהראש"
 
 # Short break
 msgid "Unclench your jaw and relax your face"
