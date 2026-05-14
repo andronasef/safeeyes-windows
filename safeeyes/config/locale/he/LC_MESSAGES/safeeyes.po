@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: \n"
-"PO-Revision-Date: 2026-05-02 08:09+0000\n"
+"PO-Revision-Date: 2026-05-16 00:11+0000\n"
 "Last-Translator: \"Omer I.S.\" <omeritzicschwartz@gmail.com>\n"
 "Language-Team: Hebrew <https://hosted.weblate.org/projects/safe-eyes/"
 "translations/he/>\n"
@@ -15,7 +15,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
-"X-Generator: Weblate 5.17.1\n"
+"X-Generator: Weblate 2026.6.dev0\n"
 
 # Short break
 msgid "Gently close your eyes"
@@ -63,7 +63,7 @@ msgstr "להרגיע את הכתפיים ולשחרר אותן כך שיהיו �
 
 # Short break
 msgid "Unclench your jaw and relax your face"
-msgstr ""
+msgstr "לשחרר את הלסת ולהרגיע את שרירי הפנים"
 
 # Short break
 msgid "Stretch your neck gently from side to side"
@@ -71,23 +71,23 @@ msgstr "למתוח את הצוואר בעדינות מצד לצד"
 
 # Short break
 msgid "Check your posture and sit back comfortably"
-msgstr ""
+msgstr "לבדוק את תנוחת הגוף הנוכחית ולהתיישב בנחת"
 
 # Short break
 msgid "Stretch your wrists and fingers"
-msgstr ""
+msgstr "למתוח את פרקי כף היד ואת האצבעות"
 
 # Long break
 msgid "Stand up and stretch your back and legs"
-msgstr ""
+msgstr "לעמוד ולמתוח את הגב והרגליים"
 
 # Long break
 msgid "Walk around and refill your water"
-msgstr ""
+msgstr "ללכת סביב ולמלא את מכל המים"
 
 # Long break
 msgid "Step away from the screen and do a short mobility stretch"
-msgstr ""
+msgstr "להתרחק מהמסך ולהתמתח מעט לשיפור הגמישות"
 
 # Long break
 msgid "Rest your eyes and focus on distant objects"
@@ -637,13 +637,13 @@ msgid "Skipping/postponing disabled period (in seconds)"
 msgstr ""
 
 msgid "take a short break now"
-msgstr ""
+msgstr "זה הזמן לקחת הפסקה קצרה"
 
 msgid "take a long break now"
-msgstr ""
+msgstr "זה הזמן לקחת הפסקה ארוכה"
 
 msgid "Fade in when breaks start"
-msgstr ""
+msgstr "כניסה הדרגתית למסך ההפסקה בעת התחלתה"
 
 msgid "Fade in duration (in milliseconds)"
 msgstr "משך זמן עמעום (במילישניות)"
