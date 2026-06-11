@@ -18,9 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """Translation setup and helpers."""
 
-import locale
 import gettext
-import sys
 from safeeyes import utility
 
 _translations = gettext.NullTranslations()
@@ -34,15 +32,10 @@ def setup() -> gettext.NullTranslations:
         languages=[utility.system_locale(), "en_US"],
         fallback=True,
     )
-    try:
-        # locale.bindtextdomain is required for Glade files
-        locale.bindtextdomain("safeeyes", utility.LOCALE_PATH)
-    except AttributeError:
-        print(
-            "installed python's gettext module does not support locale.bindtextdomain."
-            " locale.bindtextdomain is required for Glade files",
-            file=sys.stderr,
-        )
+    # Note: the GTK port also called locale.bindtextdomain() so Glade .ui files
+    # could be translated by C-level gettext. The Qt UI translates every string
+    # through translate()/Python gettext, so that binding is no longer needed
+    # (and locale.bindtextdomain does not exist on Windows).
 
     return _translations
 

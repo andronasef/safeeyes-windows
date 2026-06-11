@@ -15,26 +15,26 @@
 
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""Safe Eyes pre-break notification plugin (Qt/PySide6 port).
+
+Shows a cross-platform balloon/toast via the shared ``QSystemTrayIcon``
+(``showMessage``), replacing the freedesktop libnotify backend.
+"""
 
 import logging
 
-import gi
+from PySide6.QtWidgets import QSystemTrayIcon
+
+from safeeyes import utility
 from safeeyes.model import BreakType
+from safeeyes.qt import icons, system_tray
 from safeeyes.translations import translate as _
 
-gi.require_version("Notify", "0.7")
-from gi.repository import Notify
-
-"""
-Safe Eyes Notification plugin
-"""
-
-APPINDICATOR_ID = "safeeyes"
-notification = None
 context = None
 warning_time = 10
-
-Notify.init(APPINDICATOR_ID)
+# How long the pre-break toast stays up. The break starts after warning_time
+# seconds, at which point on_start_break clears it anyway.
+NOTIFICATION_TIMEOUT_MS = 15000
 
 
 def init(ctx, safeeyes_config, plugin_config):
@@ -48,38 +48,33 @@ def init(ctx, safeeyes_config, plugin_config):
 
 def on_pre_break(break_obj):
     """Show the notification."""
-    # Construct the message based on the type of the next break
-    global notification
-    logging.info("Show the notification")
-    message = "\n"
-    if break_obj.type == BreakType.SHORT_BREAK:
-        message += _("Ready for a short break in %s seconds") % warning_time
-    else:
-        message += _("Ready for a long break in %s seconds") % warning_time
+    if not system_tray.is_available():
+        logging.warning("System tray unavailable; cannot show notification")
+        return
 
-    notification = Notify.Notification.new(
-        "Safe Eyes", message, icon="io.github.slgobinath.SafeEyes-enabled"
-    )
-    try:
-        notification.show()
-    except BaseException:
-        logging.error("Failed to show the notification")
+    logging.info("Show the notification")
+    if break_obj.type == BreakType.SHORT_BREAK:
+        message = _("Ready for a short break in %s seconds") % warning_time
+    else:
+        message = _("Ready for a long break in %s seconds") % warning_time
+
+    def show():
+        tray = system_tray.get_tray_icon()
+        tray.showMessage(
+            "Safe Eyes", message, icons.app_icon(), NOTIFICATION_TIMEOUT_MS
+        )
+
+    utility.execute_main_thread(show)
 
 
 def on_start_break(break_obj):
     """Close the notification."""
-    global notification
     logging.info("Close pre-break notification")
-    if notification:
-        try:
-            notification.close()
-            notification = None
-        except BaseException:
-            # Some operating systems automatically close the notification.
-            pass
 
+    def hide():
+        # There is no per-message dismissal in QSystemTrayIcon; an empty message
+        # request is the documented way to retract the current balloon.
+        tray = system_tray.get_tray_icon()
+        tray.showMessage("", "", QSystemTrayIcon.MessageIcon.NoIcon, 1)
 
-def on_exit():
-    """Uninitialize the registered notification."""
-    logging.debug("Stop Notification plugin")
-    Notify.uninit()
+    utility.execute_main_thread(hide)

@@ -1,7 +1,7 @@
 # Safe Eyes is a utility to remind you to take break frequently
 # to protect your eyes from eye strain.
 
-# Copyright (C) 2025  Mel Dafert <m@dafert.at>
+# Copyright (C) 2017  Gobinath
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,9 +15,9 @@
 
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""Qt (PySide6) UI for Safe Eyes.
 
-def validate(plugin_config, plugin_settings):
-    # Audio is played via Qt's QSoundEffect (QtMultimedia), which is a hard
-    # dependency of the application and available on every supported platform,
-    # so there is no external tool to validate.
-    return None
+This package contains all toolkit-specific user-interface code. Everything Qt
+lives here (plus the small :mod:`safeeyes.mainloop` shim); the rest of the
+application stays toolkit-independent.
+"""

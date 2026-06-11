@@ -24,113 +24,18 @@ import logging
 import os
 import typing
 
-import gi
-
-gi.require_version("Gio", "2.0")
-from gi.repository import Gio
-
 from safeeyes import utility
 from safeeyes.model import TrayAction
+from safeeyes.platform_api import lock
 
 context = None
 is_long_break: bool = False
 user_locked_screen = False
-lock_screen_command: typing.Union[list[str], typing.Callable[[], None], None] = None
+lock_screen_command: lock.LockAction = None
 min_seconds = 0
 seconds_passed = 0
 tray_icon_path = None
 icon_lock_later_path = None
-
-
-def __lock_screen_command() -> typing.Union[list[str], typing.Callable[[], None], None]:
-    """Function tries to detect the screensaver command based on the current
-    envinroment.
-
-    Returns either a command to execute or function to call.
-
-    Possible results:
-        Modern GNOME:               DBus: org.gnome.ScreenSaver.Lock
-        Old Gnome, Unity, Budgie:	['gnome-screensaver-command', '--lock']
-        Cinnamon:					['cinnamon-screensaver-command', '--lock']
-        Pantheon, LXDE:				['light-locker-command', '--lock']
-        Mate:						['mate-screensaver-command', '--lock']
-        KDE:						DBus: org.freedesktop.ScreenSaver.Lock
-        XFCE:						['xflock4']
-        Otherwise:					None
-    """
-    desktop_session = os.environ.get("DESKTOP_SESSION")
-    current_desktop = os.environ.get("XDG_CURRENT_DESKTOP")
-    if desktop_session is not None:
-        desktop_session = desktop_session.lower()
-        if (
-            "xfce" in desktop_session
-            or desktop_session.startswith("xubuntu")
-            or (current_desktop is not None and "xfce" in current_desktop)
-        ) and utility.command_exist("xflock4"):
-            return ["xflock4"]
-        elif desktop_session == "cinnamon" and utility.command_exist(
-            "cinnamon-screensaver-command"
-        ):
-            # This calls org.cinnamon.ScreenSaver.Lock internally
-            return ["cinnamon-screensaver-command", "--lock"]
-        elif (
-            desktop_session == "pantheon" or desktop_session.startswith("lubuntu")
-        ) and utility.command_exist("light-locker-command"):
-            return ["light-locker-command", "--lock"]
-        elif desktop_session == "mate" and utility.command_exist(
-            "mate-screensaver-command"
-        ):
-            # This calls org.mate.ScreenSaver.Lock internally
-            # However, it warns not to rely on that
-            return ["mate-screensaver-command", "--lock"]
-        elif (
-            desktop_session == "kde"
-            or "plasma" in desktop_session
-            or desktop_session.startswith("kubuntu")
-            or os.environ.get("KDE_FULL_SESSION") == "true"
-        ):
-            # Note that this is unfortunately a non-standard KDE extension.
-            # See https://gitlab.gnome.org/GNOME/gnome-settings-daemon/-/issues/632
-            # for details.
-            return lambda: __lock_screen_dbus(
-                destination="org.freedesktop.ScreenSaver",
-                path="/ScreenSaver",
-                method="Lock",
-            )
-        elif (
-            desktop_session in ["gnome", "unity", "budgie-desktop"]
-            or desktop_session.startswith("ubuntu")
-            or desktop_session.startswith("gnome")
-        ):
-            if utility.command_exist("gnome-screensaver-command"):
-                return ["gnome-screensaver-command", "--lock"]
-            # From Gnome 3.8 no gnome-screensaver-command
-            return lambda: __lock_screen_dbus(
-                destination="org.gnome.ScreenSaver",
-                path="/org/gnome/ScreenSaver",
-                method="Lock",
-            )
-        elif gd_session := os.environ.get("GNOME_DESKTOP_SESSION_ID"):
-            if "deprecated" not in gd_session and utility.command_exist(
-                "gnome-screensaver-command"
-            ):
-                # Gnome 2
-                return ["gnome-screensaver-command", "--lock"]
-    return None
-
-
-def __lock_screen_dbus(destination: str, path: str, method: str) -> None:
-    """This assumes that the interface is the same as the destination."""
-    dbus_proxy = Gio.DBusProxy.new_for_bus_sync(
-        bus_type=Gio.BusType.SESSION,
-        flags=Gio.DBusProxyFlags.DO_NOT_LOAD_PROPERTIES,
-        info=None,
-        name=destination,
-        object_path=path,
-        interface_name=destination,
-    )
-
-    dbus_proxy.call_sync(method, None, Gio.DBusCallFlags.NONE, -1)
 
 
 def __lock_screen_later():
@@ -139,15 +44,7 @@ def __lock_screen_later():
 
 
 def __lock_screen_now() -> None:
-    global lock_screen_command
-
-    if lock_screen_command is None:
-        return
-
-    if isinstance(lock_screen_command, list):
-        utility.execute_command(lock_screen_command)
-    else:
-        lock_screen_command()
+    lock.lock_screen(lock_screen_command)
 
 
 def init(ctx, safeeyes_config, plugin_config):
@@ -167,7 +64,7 @@ def init(ctx, safeeyes_config, plugin_config):
     if plugin_config["command"]:
         lock_screen_command = plugin_config["command"].split()
     else:
-        lock_screen_command = __lock_screen_command()
+        lock_screen_command = lock.detect_lock_command()
 
 
 def on_start_break(break_obj):

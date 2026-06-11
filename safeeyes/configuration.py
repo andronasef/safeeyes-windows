@@ -170,47 +170,7 @@ class Config:
 
     @classmethod
     def _create_startup_entry(cls, force: bool = False) -> None:
-        """Create start up entry."""
-        startup_dir_path = os.path.join(utility.HOME_DIRECTORY, ".config/autostart")
-        startup_entry = os.path.join(
-            startup_dir_path, "io.github.slgobinath.SafeEyes.desktop"
-        )
-        # until Safe Eyes 2.1.5 the startup entry had another name
-        # https://github.com/slgobinath/safeeyes/commit/684d16265a48794bb3fd670da67283fe4e2f591b#diff-0863348c2143a4928518a4d3661f150ba86d042bf5320b462ea2e960c36ed275L398
-        obsolete_entry = os.path.join(startup_dir_path, "safeeyes.desktop")
+        """Create start up entry (platform-specific)."""
+        from safeeyes.platform_api import autostart
 
-        create_link = False
-
-        if force:
-            # if force is True, just create the link
-            create_link = True
-        else:
-            # if force is False, we want to avoid creating the startup symlink if it was
-            # manually deleted by the user, we want to create it only if a broken one is
-            # found
-            if os.path.islink(startup_entry):
-                # if the link exists, check if it is broken
-                try:
-                    os.stat(startup_entry)
-                except FileNotFoundError:
-                    # a FileNotFoundError will get thrown if the startup symlink is
-                    # broken
-                    create_link = True
-
-            if os.path.islink(obsolete_entry):
-                # if a link with the old naming exists, delete it and create a new one
-                create_link = True
-                utility.delete(obsolete_entry)
-
-        if create_link:
-            # Create the folder if not exist
-            utility.mkdir(startup_dir_path)
-
-            # Remove existing files
-            utility.delete(startup_entry)
-
-            # Create the new startup entry
-            try:
-                os.symlink(utility.SYSTEM_DESKTOP_FILE, startup_entry)
-            except OSError:
-                logging.error("Failed to create startup entry at %s" % startup_entry)
+        autostart.create_startup_entry(force=force)

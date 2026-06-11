@@ -25,15 +25,15 @@ from safeeyes import utility
 from safeeyes.model import BreakType, State
 
 if typing.TYPE_CHECKING:
-    from safeeyes.safeeyes import SafeEyes
+    from safeeyes.qt.application import SafeEyesApp
 
 
 class API:
-    _application: "SafeEyes"
+    _application: "SafeEyesApp"
 
     def __init__(
         self,
-        application: "SafeEyes",
+        application: "SafeEyesApp",
     ) -> None:
         self._application = application
 

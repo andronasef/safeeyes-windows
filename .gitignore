@@ -115,3 +115,6 @@ debian/files
 debian/safeeyes.substvars
 debian/safeeyes.prerm.debhelper
 debian/safeeyes.postinst.debhelper
+
+# Windows build
+packaging

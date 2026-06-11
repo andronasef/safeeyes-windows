@@ -10,10 +10,11 @@ authors = [
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
-    "Environment :: X11 Applications :: GTK",
-    "Environment :: Other Environment",
+    "Environment :: X11 Applications :: Qt",
+    "Environment :: Win32 (MS Windows)",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -21,10 +22,11 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "PyGObject",
+    "PySide6",
     "babel",
     "packaging",
-    "python-xlib"
+    # X11 idle/fullscreen/keyboard backends are Linux-only.
+    "python-xlib; sys_platform == 'linux'",
 ]
 requires-python = ">=3.10"
 
@@ -37,7 +39,11 @@ safeeyes = "safeeyes.__main__:main"
 
 [project.optional-dependencies]
 healthstats = ["croniter"]
-wayland = ["pywayland"]
+wayland = ["pywayland; sys_platform == 'linux'"]
+# Optional: Windows System Media Transport Controls for the mediacontrol plugin.
+windows-media = ["winsdk; sys_platform == 'win32'"]
+# Build-time tooling for the bundled Windows executable.
+packaging-windows = ["pyinstaller; sys_platform == 'win32'"]
 
 [build-system]
 requires = ["setuptools"]
@@ -62,7 +68,6 @@ scripts = [
 ]
 types = [
     "mypy==1.15.0",
-    "PyGObject-stubs==2.13.0",
     "types-croniter==5.0.1.20250322",
     "types-python-xlib==0.33.0.20240407",
     {include-group = "tests"},
