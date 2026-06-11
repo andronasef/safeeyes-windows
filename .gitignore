@@ -33,6 +33,8 @@ wheels/
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+#  ...but the hand-maintained Windows build spec is source (needed by CI).
+!packaging/windows/safeeyes.spec
 
 # Installer logs
 pip-log.txt
@@ -115,3 +117,7 @@ debian/files
 debian/safeeyes.substvars
 debian/safeeyes.prerm.debhelper
 debian/safeeyes.postinst.debhelper
+
+# Windows build outputs (keep the build scripts under packaging/windows/ tracked
+# so CI can build them; ignore only the generated installer/exe).
+packaging/windows/installer/

@@ -31,10 +31,7 @@ from safeeyes.model import State
 
 from safeeyes.context import Context
 
-import gi
-
-gi.require_version("GLib", "2.0")
-from gi.repository import GLib
+from safeeyes import mainloop
 
 
 class SafeEyesCore:
@@ -52,7 +49,7 @@ class SafeEyesCore:
     _break_queue: typing.Optional[BreakQueue] = None
 
     # set while __wait_for is running
-    _timeout_id: typing.Optional[int] = None
+    _timeout: typing.Optional[mainloop.Timer] = None
     _callback: typing.Optional[typing.Callable[[], None]] = None
 
     # set while __fire_hook is running
@@ -374,25 +371,24 @@ class SafeEyesCore:
         callback: typing.Callable[[], None],
     ) -> None:
         """Wait until someone wake up or the timeout happens."""
-        if self._callback is not None or self._timeout_id is not None:
+        if self._callback is not None or self._timeout is not None:
             raise Exception("this should not be called reentrantly")
 
         self._callback = callback
-        self._timeout_id = GLib.timeout_add_seconds(duration, self.__on_wakeup)
+        # mainloop timers are single-shot, mirroring the old GLib.SOURCE_REMOVE
+        # behaviour: __on_wakeup fires exactly once.
+        self._timeout = mainloop.schedule_seconds(duration, self.__on_wakeup)
 
-    def __on_wakeup(self) -> bool:
-        if self._callback is None or self._timeout_id is None:
+    def __on_wakeup(self) -> None:
+        if self._callback is None or self._timeout is None:
             raise Exception("Woken up but no callback")
 
         callback = self._callback
 
-        self._timeout_id = None
+        self._timeout = None
         self._callback = None
 
         callback()
-
-        # This signals that the callback should only be called once
-        return GLib.SOURCE_REMOVE
 
     def __fire_hook(
         self,
@@ -412,7 +408,7 @@ class SafeEyesCore:
         return proceed
 
     def __wakeup_scheduler(self) -> None:
-        if (self._callback is None) != (self._timeout_id is None):
+        if (self._callback is None) != (self._timeout is None):
             # either both are set or none are set
             raise Exception("This should never happen")
 
@@ -423,11 +419,11 @@ class SafeEyesCore:
             # both are set
             raise Exception("This should never happen")
 
-        if self._callback is not None and self._timeout_id is not None:
+        if self._callback is not None and self._timeout is not None:
             callback = self._callback
 
-            GLib.source_remove(self._timeout_id)
-            self._timeout_id = None
+            mainloop.cancel(self._timeout)
+            self._timeout = None
             self._callback = None
 
             callback()

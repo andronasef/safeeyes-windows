@@ -37,23 +37,25 @@ from pathlib import Path
 
 import babel.core
 import babel.dates
-import gi
-
-gi.require_version("Gtk", "4.0")
-gi.require_version("Gdk", "4.0")
-
-from gi.repository import Gdk
-from gi.repository import Gtk
-from gi.repository import GLib
-from gi.repository import GdkPixbuf
 from packaging.version import parse
+
+from safeeyes import mainloop
+from safeeyes.platform_api import IS_WINDOWS
 
 BIN_DIRECTORY = os.path.dirname(os.path.realpath(__file__))
 HOME_DIRECTORY = os.environ.get("HOME") or os.path.expanduser("~")
-CONFIG_DIRECTORY = os.path.join(
-    os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME_DIRECTORY, ".config"),
-    "safeeyes",
-)
+if IS_WINDOWS:
+    # Windows: store per-user config under %APPDATA%\SafeEyes instead of XDG.
+    CONFIG_DIRECTORY = os.path.join(
+        os.environ.get("APPDATA")
+        or os.path.join(HOME_DIRECTORY, "AppData", "Roaming"),
+        "SafeEyes",
+    )
+else:
+    CONFIG_DIRECTORY = os.path.join(
+        os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME_DIRECTORY, ".config"),
+        "safeeyes",
+    )
 STYLE_SHEET_DIRECTORY = os.path.join(CONFIG_DIRECTORY, "style")
 CONFIG_FILE_PATH = os.path.join(CONFIG_DIRECTORY, "safeeyes.json")
 CONFIG_RESOURCE = os.path.join(CONFIG_DIRECTORY, "resource")
@@ -64,7 +66,11 @@ CUSTOM_STYLE_SHEET_PATH = os.path.join(
 )
 SYSTEM_CONFIG_FILE_PATH = os.path.join(BIN_DIRECTORY, "config/safeeyes.json")
 SYSTEM_STYLE_SHEET_PATH = os.path.join(BIN_DIRECTORY, "config/style/safeeyes_style.css")
-LOG_FILE_PATH = os.path.join(HOME_DIRECTORY, "safeeyes.log")
+# On Linux the log lives in $HOME; on Windows the user's home root is not an
+# appropriate location, so keep it alongside the config under %APPDATA%.
+LOG_FILE_PATH = os.path.join(
+    CONFIG_DIRECTORY if IS_WINDOWS else HOME_DIRECTORY, "safeeyes.log"
+)
 SYSTEM_PLUGINS_DIR = os.path.join(BIN_DIRECTORY, "plugins")
 USER_PLUGINS_DIR = os.path.join(CONFIG_DIRECTORY, "plugins")
 LOCALE_PATH = os.path.join(BIN_DIRECTORY, "config/locale")
@@ -119,10 +125,15 @@ def execute_main_thread(
     target_function: typing.Callable[P2, None], *args: P2.args, **kwargs: P2.kwargs
 ) -> None:
     """Execute the given function in main thread."""
-    GLib.idle_add(lambda: target_function(*args, **kwargs))
+    mainloop.post_to_main_thread(lambda: target_function(*args, **kwargs))
 
 
-def system_locale(category=locale.LC_MESSAGES):
+# locale.LC_MESSAGES is POSIX-only and does not exist on Windows; fall back to
+# LC_CTYPE there (present on every platform).
+DEFAULT_LOCALE_CATEGORY = getattr(locale, "LC_MESSAGES", locale.LC_CTYPE)
+
+
+def system_locale(category=DEFAULT_LOCALE_CATEGORY):
     """Return the system locale.
 
     If not available, return en_US.UTF-8.
@@ -279,6 +290,11 @@ def load_plugins_config(safeeyes_config):
 def desktop_environment():
     """Detect the desktop environment."""
     global DESKTOP_ENVIRONMENT
+    if IS_WINDOWS:
+        # Return a concrete, non-"unknown" value so plugin desktop-environment
+        # gating passes and platform branches can route to the Windows paths.
+        DESKTOP_ENVIRONMENT = "windows"
+        return DESKTOP_ENVIRONMENT
     desktop_session = os.environ.get("DESKTOP_SESSION")
     current_desktop = os.environ.get("XDG_CURRENT_DESKTOP")
     env = "unknown"
@@ -335,6 +351,10 @@ def is_wayland():
     https://unix.stackexchange.com/a/325972/222290
     """
     global IS_WAYLAND
+
+    if IS_WINDOWS:
+        IS_WAYLAND = False
+        return IS_WAYLAND
 
     # Easy method. Does not depend on loginctl
     # https://stackoverflow.com/questions/45536141/how-i-can-find-out-if-a-linux-system-uses-wayland-or-x11/45537237#45537237
@@ -402,19 +422,6 @@ def sha256sum(filename):
     return h.hexdigest()
 
 
-def load_css_file(style_sheet_path, priority, required=True):
-    if not os.path.isfile(style_sheet_path):
-        if required:
-            logging.warning("Failed loading required stylesheet")
-        return
-
-    css_provider = Gtk.CssProvider()
-    css_provider.load_from_path(style_sheet_path)
-
-    display = Gdk.Display.get_default()
-    Gtk.StyleContext.add_provider_for_display(display, css_provider, priority)
-
-
 def cleanup_old_user_stylesheet():
     # Create the XDG_CONFIG_HOME(or ~/.config)/safeeyes/style directory
     if not os.path.isdir(STYLE_SHEET_DIRECTORY):
@@ -454,6 +461,11 @@ def cleanup_old_user_stylesheet():
 def initialize_platform():
     """Copy icons and generate desktop entries."""
     logging.debug("Initialize the platform")
+
+    if IS_WINDOWS:
+        # No XDG desktop entries or icon theme to install on Windows; the
+        # installer handles Start Menu shortcuts and icons instead.
+        return
 
     applications_dir_path = os.path.join(HOME_DIRECTORY, ".local/share/applications")
     icons_dir_path = os.path.join(HOME_DIRECTORY, ".local/share/icons")
@@ -532,6 +544,9 @@ def initialize_logging(debug):
 
     # Append the logs and overwrite once reached 1MB
     if debug:
+        # Ensure the log directory exists (on Windows it lives under the config
+        # directory, which may not have been created yet at this point).
+        mkdir(os.path.dirname(LOG_FILE_PATH))
         # Log to file
         file_handler = RotatingFileHandler(
             LOG_FILE_PATH, maxBytes=1024 * 1024, backupCount=5, encoding=None, delay=0
@@ -649,18 +664,6 @@ def open_session():
     if session is None:
         session = {"plugin": {}}
     return session
-
-
-def load_and_scale_image(
-    path: str, width: int, height: int
-) -> typing.Optional[Gtk.Image]:
-    if not os.path.isfile(path):
-        return None
-    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
-        filename=path, width=width, height=height, preserve_aspect_ratio=True
-    )
-    image = Gtk.Image.new_from_pixbuf(pixbuf)
-    return image
 
 
 def has_method(module, method_name, no_of_args=0):

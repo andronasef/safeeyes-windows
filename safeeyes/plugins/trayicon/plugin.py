@@ -15,18 +15,25 @@
 
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""Safe Eyes tray icon plugin (Qt/PySide6 port).
+
+The menu model is built by :meth:`TrayIcon.get_items` as a toolkit-neutral list
+of dicts; :meth:`TrayIcon._build_menu` turns that into a ``QMenu`` attached to
+the shared :class:`QSystemTrayIcon`. This replaces the previous freedesktop
+StatusNotifierItem / com.canonical.dbusmenu D-Bus implementation.
+"""
 
 import datetime
-from safeeyes.model import BreakType
-import gi
-
-gi.require_version("Gtk", "4.0")
-from gi.repository import Gio, GLib
 import logging
-from safeeyes import utility
-from safeeyes.context import Context
-from safeeyes.translations import translate as _
 import typing
+
+from PySide6.QtWidgets import QMenu, QSystemTrayIcon
+
+from safeeyes import mainloop, utility
+from safeeyes.context import Context
+from safeeyes.model import BreakType
+from safeeyes.qt import icons, system_tray
+from safeeyes.translations import translate as _
 
 """
 Safe Eyes tray icon plugin
@@ -35,458 +42,9 @@ Safe Eyes tray icon plugin
 tray_icon: typing.Optional["TrayIcon"] = None
 safeeyes_config = None
 
-SNI_NODE_INFO = Gio.DBusNodeInfo.new_for_xml(
-    """
-<?xml version="1.0" encoding="UTF-8"?>
-<node>
-    <interface name="org.kde.StatusNotifierItem">
-        <property name="Category" type="s" access="read"/>
-        <property name="Id" type="s" access="read"/>
-        <property name="Title" type="s" access="read"/>
-        <property name="ToolTip" type="(sa(iiay)ss)" access="read"/>
-        <property name="Menu" type="o" access="read"/>
-        <property name="ItemIsMenu" type="b" access="read"/>
-        <property name="IconName" type="s" access="read"/>
-        <property name="IconThemePath" type="s" access="read"/>
-        <property name="Status" type="s" access="read"/>
-        <signal name="NewIcon"/>
-        <signal name="NewTooltip"/>
-
-        <method name="ProvideXdgActivationToken">
-            <arg name="token" type="s" direction="in"/>
-        </method>
-        <method name="Activate">
-            <arg name="x" type="i" direction="in"/>
-            <arg name="y" type="i" direction="in"/>
-        </method>
-        <method name="SecondaryActivate">
-            <arg name="x" type="i" direction="in"/>
-            <arg name="y" type="i" direction="in"/>
-        </method>
-
-        <property name="XAyatanaLabel" type="s" access="read"/>
-        <signal name="XAyatanaNewLabel">
-            <arg type="s" name="label" direction="out" />
-            <arg type="s" name="guide" direction="out" />
-        </signal>
-    </interface>
-</node>"""
-).interfaces[0]
-
-MENU_NODE_INFO = Gio.DBusNodeInfo.new_for_xml(
-    """
-<?xml version="1.0" encoding="UTF-8"?>
-<node>
-    <interface name="com.canonical.dbusmenu">
-        <method name="GetLayout">
-            <arg type="i" direction="in"/>
-            <arg type="i" direction="in"/>
-            <arg type="as" direction="in"/>
-            <arg type="u" direction="out"/>
-            <arg type="(ia{sv}av)" direction="out"/>
-        </method>
-        <method name="GetGroupProperties">
-            <arg type="ai" name="ids" direction="in"/>
-            <arg type="as" name="propertyNames" direction="in" />
-            <arg type="a(ia{sv})" name="properties" direction="out" />
-        </method>
-        <method name="GetProperty">
-            <arg type="i" name="id" direction="in"/>
-            <arg type="s" name="name" direction="in"/>
-            <arg type="v" name="value" direction="out"/>
-        </method>
-        <method name="Event">
-            <arg type="i" direction="in"/>
-            <arg type="s" direction="in"/>
-            <arg type="v" direction="in"/>
-            <arg type="u" direction="in"/>
-        </method>
-        <method name="EventGroup">
-            <arg type="a(isvu)" name="events" direction="in" />
-            <arg type="ai" name="idErrors" direction="out" />
-        </method>
-        <method name="AboutToShow">
-            <arg type="i" direction="in"/>
-            <arg type="b" direction="out"/>
-        </method>
-        <method name="AboutToShowGroup">
-            <arg type="ai" name="ids" direction="in" />
-            <arg type="ai" name="updatesNeeded" direction="out" />
-            <arg type="ai" name="idErrors" direction="out" />
-        </method>
-        <signal name="LayoutUpdated">
-            <arg type="u"/>
-            <arg type="i"/>
-        </signal>
-    </interface>
-</node>"""
-).interfaces[0]
-
-
-class DBusService:
-    def __init__(self, interface_info, object_path, bus):
-        self.interface_info = interface_info
-        self.bus = bus
-        self.object_path = object_path
-        self.registration_id = None
-
-    def register(self):
-        self.registration_id = self.bus.register_object(
-            object_path=self.object_path,
-            interface_info=self.interface_info,
-            method_call_closure=self.on_method_call,
-            get_property_closure=self.on_get_property,
-        )
-
-        if not self.registration_id:
-            raise GLib.Error(f"Failed to register object with path {self.object_path}")
-
-        self.interface_info.cache_build()
-
-    def unregister(self):
-        self.interface_info.cache_release()
-
-        if self.registration_id is not None:
-            self.bus.unregister_object(self.registration_id)
-            self.registration_id = None
-
-    def on_method_call(
-        self,
-        _connection,
-        _sender,
-        _path,
-        _interface_name,
-        method_name,
-        parameters,
-        invocation,
-    ):
-        method_info = self.interface_info.lookup_method(method_name)
-        method = getattr(self, method_name)
-        result = method(*parameters.unpack())
-        out_arg_types = "".join([arg.signature for arg in method_info.out_args])
-        return_value = None
-
-        if method_info.out_args:
-            return_value = GLib.Variant(f"({out_arg_types})", result)
-
-        invocation.return_value(return_value)
-
-    def on_get_property(
-        self, _connection, _sender, _path, _interface_name, property_name
-    ):
-        property_info = self.interface_info.lookup_property(property_name)
-        return GLib.Variant(property_info.signature, getattr(self, property_name))
-
-    def emit_signal(self, signal_name, args=None):
-        signal_info = self.interface_info.lookup_signal(signal_name)
-        if len(signal_info.args) == 0:
-            parameters = None
-        else:
-            arg_types = "".join([arg.signature for arg in signal_info.args])
-            parameters = GLib.Variant(f"({arg_types})", args)
-        self.bus.emit_signal(
-            destination_bus_name=None,
-            object_path=self.object_path,
-            interface_name=self.interface_info.name,
-            signal_name=signal_name,
-            parameters=parameters,
-        )
-
-
-class DBusMenuService(DBusService):
-    DBUS_SERVICE_PATH = "/io/github/slgobinath/SafeEyes/Menu"
-
-    revision = 0
-
-    # TODO: replace dict here with more exact typing for item
-    items: list[dict] = []
-    # TODO: replace dict here with more exact typing for item
-    idToItems: dict[str, dict] = {}
-
-    def __init__(self, session_bus, items):
-        super().__init__(
-            interface_info=MENU_NODE_INFO,
-            object_path=self.DBUS_SERVICE_PATH,
-            bus=session_bus,
-        )
-
-        self.set_items(items)
-
-    def set_items(self, items):
-        self.items = items
-
-        self.idToItems = self.getItemsFlat(items, {})
-
-        self.revision += 1
-
-        self.LayoutUpdated(self.revision, 0)
-
-    @staticmethod
-    def getItemsFlat(items, idToItems):
-        for item in items:
-            if item.get("hidden", False):
-                continue
-
-            idToItems[item["id"]] = item
-
-            if "children" in item:
-                idToItems = DBusMenuService.getItemsFlat(item["children"], idToItems)
-
-        return idToItems
-
-    @staticmethod
-    def singleItemToDbus(item):
-        props = DBusMenuService.itemPropsToDbus(item)
-
-        return (item["id"], props)
-
-    @staticmethod
-    def itemPropsToDbus(item):
-        result = {}
-
-        string_props = ["label", "icon-name", "type", "children-display"]
-        for key in string_props:
-            if key in item:
-                result[key] = GLib.Variant("s", item[key])
-
-        bool_props = ["enabled"]
-        for key in bool_props:
-            if key in item:
-                result[key] = GLib.Variant("b", item[key])
-
-        return result
-
-    @staticmethod
-    def itemToDbus(item, recursion_depth):
-        if item.get("hidden", False):
-            return None
-
-        props = DBusMenuService.itemPropsToDbus(item)
-
-        children = []
-        if recursion_depth > 1 or recursion_depth == -1:
-            if "children" in item:
-                children = [
-                    DBusMenuService.itemToDbus(item, recursion_depth - 1)
-                    for item in item["children"]
-                ]
-                children = [i for i in children if i is not None]
-
-        return GLib.Variant("(ia{sv}av)", (item["id"], props, children))
-
-    def findItemsWithParent(self, parent_id, items):
-        for item in items:
-            if item.get("hidden", False):
-                continue
-            if "children" in item:
-                if item["id"] == parent_id:
-                    return item["children"]
-                else:
-                    ret = self.findItemsWithParent(parent_id, item["children"])
-                    if ret is not None:
-                        return ret
-        return None
-
-    def GetLayout(self, parent_id, recursion_depth, property_names):
-        children = []
-
-        if parent_id == 0:
-            children = self.items
-        else:
-            children = self.findItemsWithParent(parent_id, self.items)
-            if children is None:
-                children = []
-
-        children = [self.itemToDbus(item, recursion_depth) for item in children]
-        children = [i for i in children if i is not None]
-
-        ret = (
-            self.revision,
-            (0, {"children-display": GLib.Variant("s", "submenu")}, children),
-        )
-
-        return ret
-
-    def GetGroupProperties(self, ids, property_names):
-        ret = []
-
-        for idx in ids:
-            if idx in self.idToItems:
-                props = DBusMenuService.singleItemToDbus(self.idToItems[idx])
-                if props is not None:
-                    ret.append(props)
-
-        return (ret,)
-
-    def GetProperty(self, idx, name):
-        ret = None
-
-        if idx in self.idToItems:
-            props = DBusMenuService.singleItemToDbus(self.idToItems[idx])
-            if props is not None and name in props:
-                ret = props[name]
-
-        return ret
-
-    def Event(self, idx, event_id, data, timestamp):
-        if event_id != "clicked":
-            return
-
-        if idx in self.idToItems:
-            item = self.idToItems[idx]
-            if "callback" in item:
-                item["callback"]()
-
-    def EventGroup(self, events):
-        not_found = []
-
-        for idx, event_id, data, timestamp in events:
-            if idx not in self.idToItems:
-                not_found.append(idx)
-                continue
-
-            if event_id != "clicked":
-                continue
-
-            item = self.idToItems[idx]
-            if "callback" in item:
-                item["callback"]()
-
-        return not_found
-
-    def AboutToShow(self, item_id):
-        return (False,)
-
-    def AboutToShowGroup(self, ids):
-        not_found = []
-
-        for idx in ids:
-            if idx not in self.idToItems:
-                not_found.append(idx)
-                continue
-
-        return ([], not_found)
-
-    def LayoutUpdated(self, revision, parent):
-        self.emit_signal("LayoutUpdated", (revision, parent))
-
-
-class StatusNotifierItemService(DBusService):
-    DBUS_SERVICE_PATH = "/org/ayatana/NotificationItem/io_github_slgobinath_SafeEyes"
-
-    Category = "ApplicationStatus"
-    Id = "io.github.slgobinath.SafeEyes"
-    Title = "Safe Eyes"
-    Status = "Active"
-    IconName = "io.github.slgobinath.SafeEyes-enabled"
-    IconThemePath = ""
-    ToolTip: tuple[str, list[typing.Any], str, str] = ("", [], "Safe Eyes", "")
-    XAyatanaLabel = ""
-    ItemIsMenu = True
-    Menu = None
-
-    last_activation_token: typing.Optional[str] = None
-    watcher_watcher_id: typing.Optional[int] = None
-
-    def __init__(
-        self,
-        session_bus,
-        menu_items,
-        on_secondary_activate: typing.Optional[typing.Callable[[], None]] = None,
-    ):
-        super().__init__(
-            interface_info=SNI_NODE_INFO,
-            object_path=self.DBUS_SERVICE_PATH,
-            bus=session_bus,
-        )
-
-        self.bus = session_bus
-        self._on_secondary_activate = on_secondary_activate
-
-        self._menu = DBusMenuService(session_bus, menu_items)
-        self.Menu = self._menu.DBUS_SERVICE_PATH
-
-    def register(self) -> None:
-        self._menu.register()
-        super().register()
-
-        # when there already is a watcher, __register gets called instantly
-        # it also gets called again anytime the watcher disappears and reappears
-        self.watcher_watcher_id = Gio.bus_watch_name(
-            Gio.BusType.SESSION,
-            "org.kde.StatusNotifierWatcher",
-            Gio.BusNameWatcherFlags.NONE,
-            lambda *args: self.__register(),
-            None,
-        )
-
-    def __register(self) -> None:
-        watcher = Gio.DBusProxy.new_sync(
-            connection=self.bus,
-            flags=Gio.DBusProxyFlags.DO_NOT_LOAD_PROPERTIES,
-            info=None,
-            name="org.kde.StatusNotifierWatcher",
-            object_path="/StatusNotifierWatcher",
-            interface_name="org.kde.StatusNotifierWatcher",
-            cancellable=None,
-        )
-
-        # Note that according to the (freedesktop) spec, we should own the name
-        # org.freedesktop.StatusNotifierItem-PID-ID and pass that to the watcher
-        # instead
-        # with the path being hardcoded at /StatusNotifierItem
-        # The spec behaviour is worse for flatpak, however, as it requires owning a
-        # pretty generic name.
-        # Note that libappindicator/ayatana also used this non-standard behaviour -
-        # this must be pretty well supported then.
-        watcher.RegisterStatusNotifierItem("(s)", self.DBUS_SERVICE_PATH)  # type: ignore[attr-defined]
-
-    def unregister(self):
-        super().unregister()
-        self._menu.unregister()
-
-        Gio.bus_unwatch_name(self.watcher_watcher_id)
-        self.watcher_watcher_id = None
-
-    def set_items(self, items):
-        self._menu.set_items(items)
-
-    def set_icon(self, icon):
-        self.IconName = icon
-
-        self.emit_signal("NewIcon")
-
-    def set_tooltip(self, title, description):
-        self.ToolTip = ("", [], title, description)
-
-        self.emit_signal("NewTooltip")
-
-    def set_xayatanalabel(self, label):
-        self.XAyatanaLabel = label
-
-        self.emit_signal("XAyatanaNewLabel", (label, ""))
-
-    def ProvideXdgActivationToken(self, token: str) -> None:
-        self.last_activation_token = token
-
-    def Activate(self, x: int, y: int) -> None:
-        # The tray item is menu-driven, so primary activation is handled by the host.
-        return None
-
-    def SecondaryActivate(self, x: int, y: int) -> None:
-        if self._on_secondary_activate is not None:
-            self._on_secondary_activate()
-
 
 class TrayIcon:
     """Create and show the tray icon along with the tray menu."""
-
-    _animation_timeout_id: typing.Optional[int] = None
-    _animation_icon_enabled: bool = False
-
-    _resume_timeout_id: typing.Optional[int] = None
-
-    _session_bus: Gio.DBusConnection
 
     def __init__(self, context: Context, plugin_config):
         self.context = context
@@ -505,24 +63,19 @@ class TrayIcon:
         self.allow_disabling = plugin_config["allow_disabling"]
         self.menu_locked = False
 
-        # This is using a separate dbus connection on purpose
-        # StatusNotifierWatcher does not have an unregister method - the spec instead
-        # says that the watcher should detect the item "going away from the bus"
-        # in practice, this means that the connection closing is detected by the watcher
-        # which can only happen if we use our own connection, and close it manually
-        self._session_bus = Gio.DBusConnection.new_for_address_sync(
-            Gio.dbus_address_get_for_bus_sync(Gio.BusType.SESSION),
-            Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
-            | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
-        )
+        self._animation_timer: typing.Optional[mainloop.Timer] = None
+        self._animation_icon_enabled = False
+        self._resume_timer: typing.Optional[mainloop.Timer] = None
+        # Keep a reference to the live QMenu so it is not garbage-collected
+        # while shown by the tray icon.
+        self._menu: typing.Optional[QMenu] = None
+        self._current_icon = icons.TRAY_ENABLED
 
-        self.sni_service = StatusNotifierItemService(
-            self._session_bus,
-            menu_items=self.get_items(),
-            on_secondary_activate=self.on_secondary_activate,
-        )
-        self.sni_service.register()
+        self._tray = system_tray.get_tray_icon()
+        self._tray.activated.connect(self._on_activated)
+        self._set_icon(icons.TRAY_ENABLED)
 
+        self.update_menu()
         self.update_tooltip()
 
     def initialize(self, plugin_config):
@@ -534,8 +87,58 @@ class TrayIcon:
         self.update_tooltip()
 
     def unregister(self) -> None:
-        self.sni_service.unregister()
-        self._session_bus.close_sync()
+        self.stop_animation()
+        self.__clear_resume_timer()
+        try:
+            self._tray.activated.disconnect(self._on_activated)
+        except (RuntimeError, TypeError):
+            pass
+        self._tray.setContextMenu(None)
+        self._menu = None
+
+    # -- icon / menu rendering --------------------------------------------
+
+    def _set_icon(self, name: str) -> None:
+        self._current_icon = name
+        self._tray.setIcon(icons.themed_icon(name))
+
+    def _on_activated(self, reason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.MiddleClick:
+            self.on_secondary_activate()
+
+    def _build_menu(self, items) -> QMenu:
+        menu = QMenu()
+        self._populate_menu(menu, items)
+        return menu
+
+    def _populate_menu(self, menu: QMenu, items) -> None:
+        for item in items:
+            if item.get("hidden", False):
+                continue
+
+            if item.get("type") == "separator":
+                menu.addSeparator()
+                continue
+
+            children = item.get("children")
+            if children is not None:
+                submenu = menu.addMenu(item["label"])
+                submenu.setEnabled(item.get("enabled", True))
+                if "icon-name" in item:
+                    submenu.setIcon(icons.themed_icon(item["icon-name"]))
+                self._populate_menu(submenu, children)
+                continue
+
+            action = menu.addAction(item["label"])
+            action.setEnabled(item.get("enabled", True))
+            if "icon-name" in item:
+                action.setIcon(icons.themed_icon(item["icon-name"]))
+
+            callback = item.get("callback")
+            if callback is not None:
+                action.triggered.connect(
+                    lambda checked=False, cb=callback: cb()
+                )
 
     def get_items(self):
         breaks_found = self.has_breaks()
@@ -697,7 +300,12 @@ class TrayIcon:
         ]
 
     def update_menu(self):
-        self.sni_service.set_items(self.get_items())
+        new_menu = self._build_menu(self.get_items())
+        old_menu = self._menu
+        self._menu = new_menu
+        self._tray.setContextMenu(new_menu)
+        if old_menu is not None:
+            old_menu.deleteLater()
 
     def update_tooltip(self):
         next_break = self.get_next_break_time()
@@ -713,11 +321,11 @@ class TrayIcon:
                 description = next_long_time
             else:
                 description = next_time
+            tooltip = "Safe Eyes - %s" % description
         else:
-            description = ""
+            tooltip = "Safe Eyes"
 
-        self.sni_service.set_tooltip("Safe Eyes", description)
-        self.sni_service.set_xayatanalabel(description)
+        self._tray.setToolTip(tooltip)
 
     def quit_safe_eyes(self):
         """Handle Quit menu action.
@@ -734,14 +342,14 @@ class TrayIcon:
 
         This action shows the Settings dialog.
         """
-        self.on_show_settings(self.sni_service.last_activation_token)
+        self.on_show_settings()
 
     def show_about(self) -> None:
         """Handle About menu action.
 
         This action shows the About dialog.
         """
-        self.on_show_about(self.sni_service.last_activation_token)
+        self.on_show_about()
 
     def next_break_time(self, dateTime):
         """Update the next break time to be displayed in the menu and
@@ -810,7 +418,8 @@ class TrayIcon:
                 )
                 info = _("Disabled until %s") % utility.format_time(self.wakeup_time)
                 self.disable_safeeyes(info)
-                self._resume_timeout_id = GLib.timeout_add_seconds(
+                self.__clear_resume_timer()
+                self._resume_timer = mainloop.schedule_seconds(
                     time_to_wait * 60, self.__resume
                 )
             self.update_menu()
@@ -837,7 +446,7 @@ class TrayIcon:
             logging.info("Disable Safe Eyes")
             self.active = False
 
-            self.sni_service.set_icon("io.github.slgobinath.SafeEyes-disabled")
+            self._set_icon(icons.TRAY_DISABLED)
             self.update_menu()
 
     def enable_ui(self):
@@ -846,54 +455,49 @@ class TrayIcon:
             logging.info("Enable Safe Eyes")
             self.active = True
 
-            self.sni_service.set_icon("io.github.slgobinath.SafeEyes-enabled")
+            self._set_icon(icons.TRAY_ENABLED)
             self.update_menu()
 
     def __resume(self):
         """Reenable Safe Eyes after the given timeout."""
+        self._resume_timer = None
+
         if not self.active:
             self.on_enable_clicked()
 
-        self._resume_timeout_id = None
-
-        return GLib.SOURCE_REMOVE
-
     def __clear_resume_timer(self):
-        if self._resume_timeout_id is not None:
-            GLib.source_remove(self._resume_timeout_id)
-            self._resume_timeout_id = None
+        mainloop.cancel(self._resume_timer)
+        self._resume_timer = None
 
     def start_animation(self) -> None:
-        if self._animation_timeout_id is not None:
+        if self._animation_timer is not None:
             self.stop_animation()
 
         self._animation_icon_enabled = False
 
-        self._animation_timeout_id = GLib.timeout_add(500, self._do_animate)
+        self._animation_timer = mainloop.schedule_repeating_ms(500, self._do_animate)
 
-    def _do_animate(self) -> bool:
+    def _do_animate(self) -> None:
         if not self.active:
-            self._animation_timeout_id = None
-            return GLib.SOURCE_REMOVE
+            mainloop.cancel(self._animation_timer)
+            self._animation_timer = None
+            return
 
         if self._animation_icon_enabled:
-            self.sni_service.set_icon("io.github.slgobinath.SafeEyes-enabled")
+            self._set_icon(icons.TRAY_ENABLED)
         else:
-            self.sni_service.set_icon("io.github.slgobinath.SafeEyes-disabled")
+            self._set_icon(icons.TRAY_DISABLED)
 
         self._animation_icon_enabled = not self._animation_icon_enabled
 
-        return GLib.SOURCE_CONTINUE
-
     def stop_animation(self) -> None:
-        if self._animation_timeout_id is not None:
-            GLib.source_remove(self._animation_timeout_id)
-            self._animation_timeout_id = None
+        mainloop.cancel(self._animation_timer)
+        self._animation_timer = None
 
         if self.active:
-            self.sni_service.set_icon("io.github.slgobinath.SafeEyes-enabled")
+            self._set_icon(icons.TRAY_ENABLED)
         else:
-            self.sni_service.set_icon("io.github.slgobinath.SafeEyes-disabled")
+            self._set_icon(icons.TRAY_DISABLED)
 
 
 def init(ctx, safeeyes_cfg, plugin_config):

@@ -18,15 +18,26 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """Audible Alert plugin plays a sound after each breaks to notify the user that
 the break has end.
+
+Qt/PySide6 port: uses ``QSoundEffect`` (cross-platform, low-latency WAV
+playback) instead of spawning ``ffplay``/``pw-play``/``winsound``.
 """
 
 import logging
+
+from PySide6.QtCore import QUrl
+from PySide6.QtMultimedia import QSoundEffect
+
 from safeeyes import utility
 
 context = None
 pre_break_alert = False
 post_break_alert = False
 volume: int = 100
+
+# QSoundEffect plays asynchronously, so each effect must stay alive until
+# playback finishes; we hold references here and drop them on completion.
+_active_effects: set = set()
 
 
 def play_sound(resource_name):
@@ -37,11 +48,8 @@ def play_sound(resource_name):
         resource_name {string} -- name of the wav file resource
 
     """
-    global volume
-
     logging.info("Playing audible alert %s at volume %s%%", resource_name, volume)
     try:
-        # Open the sound file
         path = utility.get_resource_path(resource_name)
         if path is None:
             return
@@ -49,22 +57,22 @@ def play_sound(resource_name):
         logging.error("Failed to load resource %s", resource_name)
         return
 
-    if utility.command_exist("ffplay"):  # ffmpeg
-        utility.execute_command(
-            "ffplay",
-            [
-                path,
-                "-nodisp",
-                "-nostats",
-                "-hide_banner",
-                "-autoexit",
-                "-volume",
-                str(volume),
-            ],
-        )
-    elif utility.command_exist("pw-play"):  # pipewire
-        pwvol = volume / 100  # 0 = silent, 1.0 = 100% volume
-        utility.execute_command("pw-play", ["--volume", str(pwvol), path])
+    def play():
+        effect = QSoundEffect()
+        effect.setSource(QUrl.fromLocalFile(path))
+        effect.setVolume(max(0.0, min(1.0, volume / 100)))
+
+        def _on_status_changed():
+            # Drop the reference once it is done (or failed) playing.
+            if not effect.isPlaying():
+                _active_effects.discard(effect)
+
+        effect.playingChanged.connect(_on_status_changed)
+        _active_effects.add(effect)
+        effect.play()
+
+    # QSoundEffect lives on, and must be driven by, the GUI thread/event loop.
+    utility.execute_main_thread(play)
 
 
 def init(ctx, safeeyes_config, plugin_config):

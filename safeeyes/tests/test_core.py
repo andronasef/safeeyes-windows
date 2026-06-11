@@ -90,7 +90,7 @@ class TestSafeEyesCore:
         self,
         monkeypatch: pytest.MonkeyPatch,
         time_machine: TimeMachineFixture,
-    ) -> typing.Generator[SequentialThreadingFixture]:
+    ) -> typing.Generator[SequentialThreadingFixture, None, None]:
         """This fixture allows stopping threads at any point.
 
         It is hard-coded for SafeEyesCore, the handle class returned by the fixture must
@@ -104,21 +104,22 @@ class TestSafeEyesCore:
         The next() method blocks the test code while the thread is running.
         """
         # executes instantly, on the same thread
-        # no need to switch threads, as we don't use any gtk things
+        # no need to switch threads or run a Qt event loop, as we intercept the
+        # mainloop timer primitives and drive them by hand
         handle: typing.Optional["SafeEyesCoreHandle"] = None
 
-        def timeout_add_seconds(duration, callback) -> int:
+        def schedule_seconds(duration, callback) -> int:
             if not handle:
                 raise Exception("handle must be initialized before first sleep call")
             return handle.timeout_add_seconds(duration, callback)
 
-        def source_remove(source_id: int) -> None:
+        def cancel(timer) -> None:
             if not handle:
                 raise Exception("handle must be initialized before first call")
-            handle.source_remove(source_id)
+            handle.source_remove(timer)
 
-        monkeypatch.setattr(core.GLib, "timeout_add_seconds", timeout_add_seconds)
-        monkeypatch.setattr(core.GLib, "source_remove", source_remove)
+        monkeypatch.setattr(core.mainloop, "schedule_seconds", schedule_seconds)
+        monkeypatch.setattr(core.mainloop, "cancel", cancel)
 
         def create_handle(safe_eyes_core: core.SafeEyesCore) -> SafeEyesCoreHandle:
             nonlocal time_machine

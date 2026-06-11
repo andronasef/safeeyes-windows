@@ -21,18 +21,12 @@ plugins.
 """
 
 import logging
+import os
 import random
 from enum import Enum
 from dataclasses import dataclass
 from typing import Optional, Union
 import typing
-
-import gi
-
-gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk
-
-from safeeyes import utility
 
 # Config is an intentional reexport - it used to be located here
 from safeeyes.configuration import Config
@@ -386,10 +380,25 @@ class EventHook:
         return True
 
 
+@dataclass
+class IconSpec:
+    """Toolkit-neutral description of an icon.
+
+    ``icon`` is a file path when ``system_icon`` is False, otherwise a themed
+    icon name. The UI layer turns this into its own icon type (e.g. a QIcon).
+    """
+
+    icon: str
+    system_icon: bool
+
+
 class TrayAction:
     """Data object wrapping name, icon and action."""
 
-    __toolbar_buttons: list[Gtk.Button]
+    # Toolbar buttons (UI-toolkit widgets) registered by the break screen so
+    # they can be hidden again after a single-use action fires. Kept untyped to
+    # keep this module free of any UI-toolkit import.
+    __toolbar_buttons: list
 
     def __init__(
         self,
@@ -406,20 +415,14 @@ class TrayAction:
         self.__toolbar_buttons = []
         self.single_use = single_use
 
-    def get_icon(self) -> Gtk.Image:
-        if not self.system_icon:
-            image = utility.load_and_scale_image(self.__icon, 16, 16)
-            if image is not None:
-                image.show()
-                return image
+    def get_icon_spec(self) -> IconSpec:
+        """Return a toolkit-neutral icon spec for the UI layer to render."""
+        return IconSpec(icon=self.__icon, system_icon=self.system_icon)
 
-        image = Gtk.Image.new_from_icon_name(self.__icon)
-        return image
-
-    def add_toolbar_button(self, button):
+    def add_toolbar_button(self, button) -> None:
         self.__toolbar_buttons.append(button)
 
-    def reset(self):
+    def reset(self) -> None:
         for button in self.__toolbar_buttons:
             button.hide()
         self.__toolbar_buttons.clear()
@@ -433,10 +436,8 @@ class TrayAction:
         action: typing.Callable,
         single_use: bool = True,
     ) -> "TrayAction":
-        if icon_path is not None:
-            image = utility.load_and_scale_image(icon_path, 12, 12)
-            if image is not None:
-                return TrayAction(name, icon_path, action, False, single_use)
+        if icon_path is not None and os.path.isfile(icon_path):
+            return TrayAction(name, icon_path, action, False, single_use)
 
         return TrayAction(name, icon_id, action, True, single_use)
 

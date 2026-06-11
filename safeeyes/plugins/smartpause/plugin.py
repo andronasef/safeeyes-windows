@@ -22,11 +22,12 @@ import typing
 
 from safeeyes.model import State
 from safeeyes.context import Context
+from safeeyes.platform_api import IS_WINDOWS
 
+# Only the toolkit/OS-neutral interface is imported eagerly. The concrete
+# backends pull in OS-specific dependencies (gi, pywayland, ctypes), so they are
+# imported lazily in on_start() once the right one for this session is chosen.
 from .interface import IdleMonitorInterface
-from .gnome_dbus import IdleMonitorGnomeDBus
-from .swayidle import IdleMonitorSwayidle
-from .x11 import IdleMonitorX11
 
 """
 Safe Eyes smart pause plugin
@@ -154,15 +155,25 @@ def on_start() -> None:
         return
 
     if idle_monitor is None:
-        if is_wayland_and_gnome:
+        if IS_WINDOWS:
+            from .windows import IdleMonitorWindows
+
+            idle_monitor = IdleMonitorWindows()
+        elif is_wayland_and_gnome:
+            from .gnome_dbus import IdleMonitorGnomeDBus
+
             idle_monitor = IdleMonitorGnomeDBus()
         elif use_swayidle:
+            from .swayidle import IdleMonitorSwayidle
+
             idle_monitor = IdleMonitorSwayidle()
         elif use_ext_idle_notify:
             from .ext_idle_notify import IdleMonitorExtIdleNotify
 
             idle_monitor = IdleMonitorExtIdleNotify()
         else:
+            from .x11 import IdleMonitorX11
+
             idle_monitor = IdleMonitorX11()
 
         try:

@@ -1,9 +1,35 @@
 #!/usr/bin/python3
 
 
+import io
 from pathlib import Path
 from setuptools import Command, setup
 from setuptools.command.build import build as OriginalBuildCommand
+
+# Many of the project's .po files (synced from Weblate) carry an empty
+# "POT-Creation-Date:" header. Babel's strict parser rejects an empty date,
+# while the gettext `msgfmt` tool ignored it. Give such headers a placeholder
+# date so compilation matches the old lenient behaviour. The "\n" below is the
+# literal two-character PO line-continuation escape, so only genuinely empty
+# headers match.
+_EMPTY_DATE_HEADERS = (
+    (b'"POT-Creation-Date: \\n"', b'"POT-Creation-Date: 2000-01-01 00:00+0000\\n"'),
+    (b'"PO-Revision-Date: \\n"', b'"PO-Revision-Date: 2000-01-01 00:00+0000\\n"'),
+)
+
+
+def compile_po(source_file, build_file):
+    """Compile a single .po file into a .mo file using Babel."""
+    from babel.messages.mofile import write_mo
+    from babel.messages.pofile import read_po
+
+    data = Path(source_file).read_bytes()
+    for empty, placeholder in _EMPTY_DATE_HEADERS:
+        data = data.replace(empty, placeholder)
+
+    catalog = read_po(io.BytesIO(data))
+    with open(build_file, "wb") as mo:
+        write_mo(mo, catalog)
 
 
 class BuildCommand(OriginalBuildCommand):
@@ -24,13 +50,14 @@ class BuildMoSubCommand(Command):
         self.set_undefined_options("build_py", ("build_lib", "build_lib"))
 
     def run(self):
+        # Use Babel to compile .po -> .mo instead of spawning the gettext
+        # `msgfmt` binary, which is not available on Windows.
         files = self._get_files()
 
         for build_file, source_file in files.items():
             if not self.editable_mode:
-                # Parent directory required for msgfmt to work correctly
                 Path(build_file).parent.mkdir(parents=True, exist_ok=True)
-            self.spawn(["msgfmt", source_file, "-o", build_file])
+            compile_po(source_file, build_file)
 
     def _get_files(self):
         if self.files is not None:
