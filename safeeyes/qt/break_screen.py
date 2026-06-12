@@ -264,7 +264,11 @@ class BreakScreenWindow(QWidget):
         self._msg_label.setObjectName("lbl_message")
         self._msg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._msg_label.setWordWrap(True)
-        outer.addWidget(self._msg_label, 0, Qt.AlignmentFlag.AlignCenter)
+        # Note: no AlignCenter layout flag here. A word-wrapped QLabel given a
+        # layout-item alignment is sized to its minimum width, so it wraps too
+        # early and tall messages get clipped. Letting it fill the row width
+        # (text stays centered via setAlignment above) fixes that.
+        outer.addWidget(self._msg_label)
 
         # Countdown.
         self._count_label = QLabel("")
