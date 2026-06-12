@@ -8,7 +8,7 @@
 ; per-user config (%APPDATA%\SafeEyes) and per-user autostart.
 
 #define MyAppName "Safe Eyes"
-#define MyAppVersion "3.5.0"
+#define MyAppVersion "3.5.1"
 #define MyAppPublisher "Gobinath Loganathan"
 #define MyAppURL "https://github.com/slgobinath/safeeyes"
 #define MyAppExeName "SafeEyes.exe"

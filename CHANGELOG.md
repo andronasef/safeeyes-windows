@@ -3,7 +3,7 @@
 All notable changes to this fork are documented here. This project adheres to
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
-## [Unreleased] — Cross-platform (PySide6/Qt) port
+## [3.5.1] — 2026-06-12 — Cross-platform (PySide6/Qt) port
 
 This release migrates Safe Eyes from Linux-only **GTK4/PyGObject** to
 **PySide6 (Qt)**, making it genuinely cross-platform. Windows is built and

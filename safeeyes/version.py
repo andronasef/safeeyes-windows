@@ -25,7 +25,7 @@ from pathlib import Path
 # Baked-in fallback, used by frozen bundles (PyInstaller) where neither
 # pyproject.toml nor installed-package metadata is available. Keep in sync with
 # the version in pyproject.toml.
-_FALLBACK_VERSION = "3.5.0"
+_FALLBACK_VERSION = "3.5.1"
 
 
 def get_version() -> str:
